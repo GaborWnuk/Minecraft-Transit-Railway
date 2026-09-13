@@ -36,6 +36,18 @@ stonecutter parameters {
 			string(true) { replace(", bus = EventBusSubscriber.Bus.GAME", "") }
 			string(true) { replace(", bus = EventBusSubscriber.Bus.MOD", "") }
 
+			// GuiGraphics became GuiGraphicsExtractor in the same net.minecraft.client.gui package, so
+			// the token covers the imports, the parameter types and the locals alike. Most of the drawing
+			// vocabulary survived the rename; the calls that genuinely changed shape, such as pose() and
+			// blitSprite, still fail to compile and are guarded separately rather than rewritten here.
+			string(true) { replace("GuiGraphics", "GuiGraphicsExtractor") }
+
+			// drawString and drawCenteredString were renamed with their argument lists unchanged. Both
+			// are anchored to the receiver: this codebase also draws with java.awt.Graphics2D, which has
+			// its own drawString, and rewriting that one would corrupt the font atlas generation.
+			string(true) { replace("context.drawString(", "context.text(") }
+			string(true) { replace("context.drawCenteredString(", "context.centeredText(") }
+
 			// Renamed with an identical argument list.
 			string(true) { replace(".absMoveTo(", ".absSnapTo(") }
 
@@ -73,9 +85,15 @@ stonecutter parameters {
 			string(true) { replace("KeyBindingHelper.registerKeyBinding(", "KeyMappingHelper.registerKeyMapping(") }
 			string(true) { replace("FabricItemGroup.builder()", "FabricCreativeModeTab.builder()") }
 
+			// A style now names its font through a description rather than an identifier directly.
+			string(true) { replace("withFont(ResourceLocation.fromNamespaceAndPath(MTR.MOD_ID, \"mtr\"))", "withFont(new FontDescription.Resource(Identifier.fromNamespaceAndPath(MTR.MOD_ID, \"mtr\")))") }
+
 			// The level exposes this through a method now; the field itself is private.
 			string(true) { replace("world.isClientSide &&", "world.isClientSide() &&") }
 			string(true) { replace("world.isClientSide ?", "world.isClientSide() ?") }
+
+			// The font helper takes an identifier and hands it to a style, so it wraps it too.
+			string(true) { replace("Style.EMPTY.withFont(font)", "Style.EMPTY.withFont(new FontDescription.Resource(font))") }
 
 			// The array writers take primitive arrays now rather than boxed lists, so the fastutil sets
 			// hand over their own contents directly instead of being copied into an ArrayList first.
@@ -92,6 +110,29 @@ stonecutter parameters {
 			// The server field on a player is private now; the level it is in still exposes the server.
 			string(true) { replace("context.player().server", "context.player().level().getServer()") }
 			string(true) { replace("serverPlayerEntity.server::execute", "serverPlayerEntity.level().getServer()::execute") }
+
+			// Widgets follow the same retained model as everything else drawn on screen: what was a
+			// render method is now an extraction one. Only the name changed, the arguments being the
+			// same once the graphics context rename above has applied.
+			string(true) { replace("renderWidget(", "extractWidgetRenderState(") }
+
+			// The interface matrix is two dimensional now. Every transform in these two screens passes
+			// zero for the translation's third axis and one for the scale's, so flattening them costs
+			// nothing. Anchored to the graphics context, because the world renderers still push and pop
+			// a three dimensional stack of their own.
+			string(true) { replace("context.pose().pushPose()", "context.pose().pushMatrix()") }
+			string(true) { replace("context.pose().popPose()", "context.pose().popMatrix()") }
+			string(true) { replace("context.pose().translate(width / 2F, SQUARE_SIZE, 0)", "context.pose().translate(width / 2F, SQUARE_SIZE)") }
+			string(true) { replace("context.pose().scale(2, 2, 1)", "context.pose().scale(2, 2)") }
+			string(true) { replace("context.pose().translate(width / 2F, i + TEXT_HEIGHT + TEXT_PADDING / 2F, 0)", "context.pose().translate(width / 2F, i + TEXT_HEIGHT + TEXT_PADDING / 2F)") }
+			string(true) { replace("context.pose().scale(0.5F, 0.5F, 1)", "context.pose().scale(0.5F, 0.5F)") }
+			string(true) { replace("context.pose().translate(width / 2F - newWidth / 2F, height / 2F - newHeight / 2F, 0)", "context.pose().translate(width / 2F - newWidth / 2F, height / 2F - newHeight / 2F)") }
+			string(true) { replace("context.pose().scale(newWidth / width, newHeight / height, 1)", "context.pose().scale(newWidth / width, newHeight / height)") }
+
+			// Click validation takes the button information rather than a bare button number.
+			string(true) { replace("isValidClickButton(int button)", "isValidClickButton(MouseButtonInfo mouseButtonInfo)") }
+			string(true) { replace("super.isValidClickButton(button)", "super.isValidClickButton(mouseButtonInfo)") }
+			string(true) { replace("if (isValidClickButton(button)) {", "if (isValidClickButton(mouseButtonEvent.buttonInfo())) {") }
 
 			// Several value carriers became records, or were tidied to match the ones that did, and
 			// dropped the get prefix from their accessors. Each rule is anchored to its receiver rather
@@ -119,6 +160,10 @@ stonecutter parameters {
 			string(true) { replace("getPackVersion(PackType.CLIENT_RESOURCES)", "packVersion(PackType.CLIENT_RESOURCES).major()") }
 			string(true) { replace("getPackVersion(PackType.SERVER_DATA)", "packVersion(PackType.SERVER_DATA).major()") }
 
+			// The modifier key helpers moved off Screen and onto the Minecraft instance, which is where
+			// the keyboard handler they read has always lived.
+			string(true) { replace("Screen.hasShiftDown()", "Minecraft.getInstance().hasShiftDown()") }
+
 			// Fabric renamed the world tick events to level, matching the type they have always carried.
 			// The callback interfaces are otherwise unchanged, so the method references still bind.
 			string(true) { replace("ClientTickEvents.START_WORLD_TICK", "ClientTickEvents.START_LEVEL_TICK") }
@@ -129,6 +174,22 @@ stonecutter parameters {
 			// The payload registries are named after the direction they serve rather than abbreviated.
 			string(true) { replace("PayloadTypeRegistry.playS2C()", "PayloadTypeRegistry.clientboundPlay()") }
 			string(true) { replace("PayloadTypeRegistry.playC2S()", "PayloadTypeRegistry.serverboundPlay()") }
+
+			// Screens extract render state instead of drawing, so their entry points were renamed. The
+			// three argument render(context, mouseX, mouseY) that the widgets in this mod declare is
+			// their own and keeps its name, which is why the parameter list is spelled out in full here.
+			//
+			// The two declarations carry the parameter type through themselves. Patterns are matched
+			// against the original text and replacements are not looked at again, so the rule that
+			// renames GuiGraphics on its own never sees a span another rule has already claimed.
+			string(true) { replace("void render(GuiGraphics context, int mouseX, int mouseY, float delta)", "void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta)") }
+			string(true) { replace("super.render(context, mouseX, mouseY, delta)", "super.extractRenderState(context, mouseX, mouseY, delta)") }
+			string(true) { replace("void renderBackground(GuiGraphics context, int mouseX, int mouseY, float delta)", "void extractBackground(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta)") }
+			string(true) { replace("renderBackground(context, mouseX, mouseY, delta)", "extractBackground(context, mouseX, mouseY, delta)") }
+
+			// blitSprite selects the pipeline directly now instead of being handed a factory that built a
+			// render type from the texture.
+			string(true) { replace("context.blitSprite(RenderType::guiTextured, ", "context.blitSprite(RenderPipelines.GUI_TEXTURED, ") }
 
 			// A player entity answers for the level it is in directly; the command sender wording went
 			// with the command source abstraction that no longer sits on the entity.
@@ -149,6 +210,12 @@ stonecutter parameters {
 			// side registry, which still sends towards players and keeps what it has.
 			string(true) { replace("import net.minecraft.client.renderer.ItemBlockRenderTypes;\nimport net.neoforged.neoforge.network.PacketDistributor;", "import net.neoforged.neoforge.client.network.ClientPacketDistributor;") }
 			string(true) { replace("PacketDistributor.sendToServer(", "ClientPacketDistributor.sendToServer(") }
+
+			// GuiGraphics kept its name in the accessor NeoForge offers for it, so this one reader has to
+			// be claimed before the blanket rename above reaches into the middle of the method name. A
+			// rule that matches earlier in the line wins the span, and this one starts three characters
+			// sooner.
+			string(true) { replace("event.getGuiGraphics()", "event.getGuiGraphics()") }
 
 			// The remaining reads of a player's own server field, which is private now.
 			string(true) { replace(".accept(serverPlayerEntity.server, serverPlayerEntity)", ".accept(serverPlayerEntity.level().getServer(), serverPlayerEntity)") }

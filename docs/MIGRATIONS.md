@@ -418,6 +418,58 @@ that method only below 26.1 and contribute nothing on newer versions.
 Restoring them means moving the text onto the matching `BlockItem`, which changes how those
 blocks are registered. That is deliberate outstanding work, not an oversight.
 
+**The GuiGraphics rework, broken down**
+
+`GuiGraphics` became `GuiGraphicsExtractor` and `Screen.render` became
+`Screen.extractRenderState`. The eighty-eight errors are less daunting than they look, because
+most of the drawing vocabulary survived. Across seventeen files:
+
+| Call | 26.1 | Risk |
+|---|---|---|
+| `drawString(Font, …, x, y, colour)` | `text(…)` | none, identical arguments |
+| `drawCenteredString(…)` | `centeredText(…)` | none, identical arguments |
+| `enableScissor` / `disableScissor` | unchanged | none |
+| `fill(x1, y1, x2, y2, colour)` | unchanged | none |
+| `pose().pushPose()` / `popPose()` | `pushMatrix()` / `popMatrix()` | none |
+| `pose().translate(x, y, 0)` | `translate(x, y)` | none, every call passes zero |
+| `pose().scale(x, y, 1)` | `scale(x, y)` | none, every call passes one |
+| `blitSprite(…)` | takes a `RenderPipeline` first | pick the right pipeline |
+| `pose()` held as a `PoseStack` | now a two-dimensional `Matrix3x2fStack` | see below |
+
+The renames are done. `GuiGraphics` to `GuiGraphicsExtractor`, `drawString` to `text` and
+`drawCenteredString` to `centeredText` are rewritten while building, which cleared every
+GuiGraphics symbol error. The text renames are anchored to their receiver because this
+codebase also draws with `java.awt.Graphics2D`, whose own `drawString` must not be touched.
+
+The scissor and fill calls needed nothing. The transform calls in
+`BetaWarningScreen` and `FakePauseScreen` are safe too, because they all pass zero for the
+translation's third axis and one for the scale's, so flattening to two dimensions loses
+nothing.
+
+Three places do need a decision:
+
+- `GuiHelper.drawText` translates by a **variable** z to layer text. Two dimensions have no
+  third axis, and 26.1 orders the interface by draw order rather than depth, so this needs
+  re-expressing rather than translating.
+- `Drawing` has a `Drawing(PoseStack, RenderType)` constructor that two widgets feed
+  `context.pose()` into. It needs a two-dimensional counterpart.
+- Four widgets hold `context.pose()` in a `PoseStack` local and pass it around.
+
+Note that `DrivingGuiRenderer` and `BlockEntityRendererExtension` also use a `PoseStack`, but
+theirs comes from world rendering rather than from `GuiGraphics`, and is unaffected.
+
+The `Drawing` case is worse than a missing constructor, and it joins the two GUI widgets to the
+same problem the world renderer has. `Drawing(PoseStack, RenderType)` resolves its buffer with
+`RenderType.gui()`, and 26.1 has neither piece: `RenderType` no longer offers a GUI variant at
+all, and interface drawing goes through `RenderPipelines.GUI`, `GUI_TEXTURED` and `GUI_TEXT`
+instead. JOML offers no conversion from `Matrix3x2f` to `Matrix4f` either, so the matrix cannot
+simply be widened.
+
+So the custom drawing path is not portable by adaptation. It has to move onto the pipeline
+model, which is the same change the world renderer needs. Treating them as one piece of work
+rather than two is likely to be less effort, not more, because they end up sharing the same
+approach to buffers, pipelines and uniforms.
+
 **Block colour handlers**
 
 `BlockColor` became `BlockTintSource`, and the registration changed on both loaders at once.
