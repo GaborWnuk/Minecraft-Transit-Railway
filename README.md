@@ -24,6 +24,7 @@
 > - Cable cars, end to end on a NeoForge server and client: stations, depot and route
 >   configuration, and the cars running
 > - Boats, end to end the same way, in multiplayer
+> - Escalators, in singleplayer and multiplayer
 > - Multiplayer: two players on a NeoForge server, both building the same elements and riding the
 >   trains, with nothing out of place
 > - Running the mod on a dedicated server, NeoForge and Fabric alike

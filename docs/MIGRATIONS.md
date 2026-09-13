@@ -407,7 +407,7 @@ Not yet exercised at runtime:
   26.1.2 in a fresh world has been through many reloads in play.
 - Planes, lifts, and the PIDS kinds not yet placed. Cable cars and boats are done: stations,
   depot and route configuration and the vehicles running, on a NeoForge server with clients
-  attached, in multiplayer.
+  attached, in multiplayer. Escalators work in singleplayer and multiplayer.
   Signalling is done: signals and decorative lights, trains holding for an occupied section.
   A variety of PIDS have been configured and show arrivals. Two players have played the whole
   of the above together on a NeoForge server, building the same elements and riding the trains,
