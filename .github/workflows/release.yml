@@ -58,23 +58,21 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          # Every tag that names a pre-release stays marked as one, so that a beta is never
-          # presented as the latest stable download.
-          case "$TAG" in
-            *alpha*|*beta*|*rc*|*pre*) prerelease="--prerelease" ;;
-            *) prerelease="" ;;
-          esac
           # A tag pushed again replaces its release instead of failing on it, so a release can
           # be recut under the same version once a fix has landed. The tag itself is left alone.
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release delete "$TAG" --yes
           fi
+          # The release is a full one whatever the tag says. The mod version, and so the tag,
+          # still carries upstream's `beta` marker, but that describes upstream's 4.1.0 line
+          # rather than this fork's state, and a pre-release never becomes the repository's
+          # latest download, which is what the releases page should offer.
           # Generated notes run back to the previous release. There isn't one for the first
           # release, and the fallback is the whole repository history, which on a fork of a
           # long-lived project is thousands of unrelated commits. So generate them only once
           # there is an earlier release to measure against.
           if [ -n "$(gh release list --limit 1)" ]; then
-            gh release create "$TAG" build/release/*.jar --title "$TAG" --generate-notes $prerelease
+            gh release create "$TAG" build/release/*.jar --title "$TAG" --generate-notes
           else
-            gh release create "$TAG" build/release/*.jar --title "$TAG" $prerelease --notes "Built from \`$TAG\`. See the readme for the subset of the mod confirmed to work on Minecraft 26.1.2, and the gaps behind it."
+            gh release create "$TAG" build/release/*.jar --title "$TAG" --notes "Built from \`$TAG\`. See the readme for the subset of the mod confirmed to work on Minecraft 26.1.2, and the gaps behind it."
           fi
