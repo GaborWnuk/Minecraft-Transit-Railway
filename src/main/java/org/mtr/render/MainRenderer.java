@@ -331,6 +331,10 @@ public class MainRenderer {
 			// pass: doing it inside took the game down the moment a model with a texture it had not
 			// drawn yet came into view, which is what laying the first rail does.
 			final AbstractTexture abstractTexture = Minecraft.getInstance().getTextureManager().getTexture(texture);
+			// The mesh for the vertex layout the layer reads right now. With a shader pack active that
+			// is not the layout the model was built with, and building the missing one uploads, so it
+			// too has to happen before the pass is opened.
+			newOptimizedModel.prepare(renderLayer);
 
 			final RenderTarget renderTarget = renderLayer.outputTarget().getRenderTarget();
 			final GpuTextureView colorTexture = RenderSystem.outputColorTextureOverride == null ? renderTarget.getColorTextureView() : RenderSystem.outputColorTextureOverride;
