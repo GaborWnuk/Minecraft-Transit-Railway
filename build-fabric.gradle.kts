@@ -59,6 +59,27 @@ java {
 	sourceCompatibility = requiredJava
 }
 
+// The active version reads the source tree directly and gets none of this; only the other
+// versions are built from a generated copy.
+if (!sc.current.isActive) {
+	sourceSets.main {
+		// Resources are read from the shared source tree rather than from Stonecutter's generated copy
+		// of it. Nothing under src/main/resources carries a Stonecutter marker, so that copy is only a
+		// copy, and it is not a reliable one: on roughly one run in three it writes a single 8 KiB block
+		// of some large file from 4 KiB further on, and which file varies from run to run. The fonts, at
+		// up to 18 MiB, are hit most often, and from 26.1 every glyph is rasterised at reload, so one
+		// damaged font stops the game before the title screen. It was traced by comparing the generated
+		// tree against the source after repeated regeneration, serial and parallel alike. Reading the
+		// originals leaves nothing for that copy to damage; the rewrites resources do need for a version
+		// are applied by processResources below.
+		//
+		// The generated directory is matched on its path segment rather than by equality with a File,
+		// so that it holds however the plugin happens to spell it.
+		val generatedMarker = listOf("build", "generated", "stonecutter").joinToString(File.separator)
+		resources.setSrcDirs(resources.srcDirs.filterNot { it.path.contains(generatedMarker) } + rootProject.file("src/main/resources"))
+	}
+}
+
 fun DependencyHandlerScope.modImplementationAndInclude(notation: Any) {
 	modImplementation(notation)
 	include(notation)
@@ -96,6 +117,23 @@ dependencies {
 	testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.14.4")
 }
 
+// One remap at a time across the whole build. Loom's remap runs as asynchronous work, so with
+// several versions building at once two remaps ran alongside each other and alongside every
+// other version's archive tasks, and roughly one clean build in three then failed with the remap
+// reading a corrupt zip: an invalid local header in one run, invalid stored block lengths in the
+// next, a different version each time. Which file was being contended for was not pinned down;
+// giving the remaps the archive stage to themselves took the failure from two in six clean builds
+// to none in eight, at the cost of about a minute, and they are a small tail of the build.
+abstract class RemapLock : BuildService<BuildServiceParameters.None>
+
+val remapLock = gradle.sharedServices.registerIfAbsent("remapLock", RemapLock::class) {
+	maxParallelUsages.set(1)
+}
+
+tasks.withType<net.fabricmc.loom.task.AbstractRemapJarTask>().configureEach {
+	usesService(remapLock)
+}
+
 tasks {
 	processResources {
 		val properties = mapOf(
@@ -113,6 +151,18 @@ tasks {
 
 		filesMatching(listOf("fabric.mod.json", "META-INF/neoforge.mods.toml", "META-INF/mods.toml")) {
 			expand(properties)
+		}
+
+		// From 1.21.4 an ingredient is a plain identifier, with # for a tag, and the object form the
+		// source is written in is rejected; on 26.1 it is dropped without complaint, the list comes
+		// out empty and the recipe is refused as too short. Every recipe was lost on both, and nothing
+		// was craftable. The source keeps the object form because 1.21.1 accepts nothing else, so the
+		// newer versions are rewritten on the way in. One item was renamed on 26.1 as well, and the
+		// filter is told when to apply that.
+		if (sc.current.parsed >= "1.21.4") {
+			filesMatching("data/mtr/recipe/*.json") {
+				filter(mapOf("renameItems" to (sc.current.parsed >= "26.1")), org.mtr.RecipeIngredientFilter::class.java)
+			}
 		}
 
 		exclude("**/neoforge.mods.toml")
@@ -133,6 +183,21 @@ tasks {
 		minimize()
 		relocate("com.logisticscraft", "org.mtr.libraries.com.logisticscraft")
 		relocate("de.javagl", "org.mtr.libraries.de.javagl")
+
+		// Transport Simulation Core ships its own relocated copy of log4j and slf4j, minimised down to
+		// what it actually calls, but the service files that register the implementations travel with
+		// it and still name classes that the minimisation took out. Seven of the nine registrations in
+		// the jar point at nothing.
+		//
+		// That was harmless until 26.1: NeoForge now builds a module descriptor from the mod jar and
+		// refuses one whose declared services it cannot resolve, so the game does not reach the main
+		// menu. The registrations are dropped here rather than the classes put back, because they could
+		// never have worked, and because this mod logs through the game's own log4j, which it reaches
+		// under the unrelocated name. The one registration that does resolve, Jetty's field encoder, is
+		// left alone.
+		exclude("META-INF/services/javax.annotation.processing.Processor")
+		exclude("META-INF/services/org.mtr.libraries.org.apache.logging.*")
+		exclude("META-INF/services/org.mtr.libraries.org.slf4j.*")
 	}
 
 	remapJar {
