@@ -11,7 +11,8 @@ import org.mtr.resource.RenderStage;
 import java.util.function.Consumer;
 
 //? if >= 26.1 {
-/*import com.mojang.blaze3d.buffers.GpuBuffer;
+/*import org.mtr.libraries.it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
+import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.systems.RenderPass;
@@ -47,9 +48,22 @@ public final class NewOptimizedModel {
 
 	public final ResourceLocation texture;
 //? if >= 26.1 {
-	/*@Nullable
-	private final GpuBuffer vertexBuffer;
-	private final int indexCount;
+	/*// One mesh per vertex layout the render layer has been seen to read. The layout is not fixed:
+	// with a shader pack active, Iris reports an extended entity layout during level rendering and
+	// extends any buffer built then, and the pack can be switched on or off while the model is in
+	// use. A mesh packed for one layout and drawn through the other is walked at the wrong stride,
+	// which is what tore every train apart the moment shaders were enabled mid-session. So the
+	// callback is kept, the mesh for the layout in force is looked up before each batch, and a
+	// missing one is built then. The lists the callback closes over are held by the model loader
+	// for its lifetime anyway, so keeping it costs little.
+	@Nullable
+	private final Consumer<VertexConsumer> callback;
+	private final Object2ObjectOpenHashMap<VertexFormat, Mesh> meshes = new Object2ObjectOpenHashMap<>();
+	@Nullable
+	private Mesh mesh;
+
+	private record Mesh(GpuBuffer vertexBuffer, int indexCount) {
+	}
 *///? } else {
 	@Nullable
 	private final VertexBuffer vertexBuffer;
@@ -103,46 +117,63 @@ public final class NewOptimizedModel {
 	 */
 //? if >= 26.1 {
 	/*public NewOptimizedModel(ResourceLocation texture, VertexFormat.Mode drawMode, RenderStage renderStage, @Nullable Consumer<VertexConsumer> callback) {
-		// The mesh is built once and handed straight to the GPU. From 26.1 the vertex data lives in a
-		// GpuBuffer rather than a VertexBuffer, and the index count has to be kept because the draw
-		// call needs it; the old VertexBuffer carried that itself.
-		GpuBuffer builtBuffer = null;
-		int builtIndexCount = 0;
-
-		if (callback != null) {
-			// Built through an allocator of its own rather than the shared tesselator. Beginning on the
-			// shared one hands out a builder over a single buffer, so a mesh built while another is part
-			// way through overwrites it, and the result is a model with some of its corners belonging to
-			// something else. The versions before this one avoided it too, by way of uploadStatic, which
-			// allocates privately for the same reason.
-			//
-			// The upload happens while the allocator is still open, because the mesh points into memory
-			// the allocator owns until then.
-			//
-			// Packed in the format of the layer that will draw it, rather than one fixed format. Up to
-			// 26.1 the buffer carried its own format and set the attribute pointers from it, so a mesh
-			// whose layout was merely a superset of what the shader read still drew correctly. From
-			// 26.1 the layout comes from the pipeline instead: the light stages draw through the beacon
-			// beam pipeline, which reads a 32 byte vertex, so a 36 byte entity vertex was walked at the
-			// wrong stride and every position after the first was read out of the middle of the
-			// previous vertex. The result was the lit parts of a model streaming off to infinity while
-			// everything drawn through an entity layer looked right.
-			try (final ByteBufferBuilder byteBufferBuilder = new ByteBufferBuilder(1536)) {
-				final BufferBuilder bufferBuilder = new BufferBuilder(byteBufferBuilder, drawMode, MoreRenderLayers.get(renderStage, texture).format());
-				callback.accept(bufferBuilder);
-				try (final MeshData meshData = bufferBuilder.build()) {
-					if (meshData != null) {
-						builtIndexCount = meshData.drawState().indexCount();
-						builtBuffer = RenderSystem.getDevice().createBuffer(() -> "MTR model " + texture, GpuBuffer.USAGE_VERTEX, meshData.vertexBuffer());
-					}
-				}
-			}
-		}
-
-		this.vertexBuffer = builtBuffer;
-		this.indexCount = builtIndexCount;
 		this.texture = texture;
 		this.drawMode = drawMode;
+		this.callback = callback;
+		// Built now for the layout the layer reports at this moment, so that the usual case pays
+		// nothing at draw time; a layout first seen while drawing is built then, in prepare.
+		if (callback != null) {
+			final VertexFormat format = MoreRenderLayers.get(renderStage, texture).format();
+			meshes.put(format, build(format));
+		}
+	}
+
+	// Packs the mesh for one layout and hands it to the GPU. From 26.1 the vertex data lives in a
+	// GpuBuffer rather than a VertexBuffer, and the index count has to be kept because the draw
+	// call needs it; the old VertexBuffer carried that itself.
+	//
+	// Packed in the format of the layer that will draw it, rather than one fixed format. Up to
+	// 26.1 the buffer carried its own format and set the attribute pointers from it, so a mesh
+	// whose layout was merely a superset of what the shader read still drew correctly. From
+	// 26.1 the layout comes from the pipeline instead: the light stages draw through the beacon
+	// beam pipeline, which reads a 32 byte vertex, so a 36 byte entity vertex was walked at the
+	// wrong stride and every position after the first was read out of the middle of the
+	// previous vertex. The result was the lit parts of a model streaming off to infinity while
+	// everything drawn through an entity layer looked right.
+	//
+	// Built through an allocator of its own rather than the shared tesselator. Beginning on the
+	// shared one hands out a builder over a single buffer, so a mesh built while another is part
+	// way through overwrites it, and the result is a model with some of its corners belonging to
+	// something else. The versions before this one avoided it too, by way of uploadStatic, which
+	// allocates privately for the same reason. The upload happens while the allocator is still
+	// open, because the mesh points into memory the allocator owns until then.
+	@Nullable
+	private Mesh build(VertexFormat format) {
+		try (final ByteBufferBuilder byteBufferBuilder = new ByteBufferBuilder(1536)) {
+			final BufferBuilder bufferBuilder = new BufferBuilder(byteBufferBuilder, drawMode, format);
+			callback.accept(bufferBuilder);
+			try (final MeshData meshData = bufferBuilder.build()) {
+				if (meshData == null) {
+					return null;
+				}
+				return new Mesh(RenderSystem.getDevice().createBuffer(() -> "MTR model " + texture, GpuBuffer.USAGE_VERTEX, meshData.vertexBuffer()), meshData.drawState().indexCount());
+			}
+		}
+	}
+
+	// Selects the mesh for the layout the layer reads now, building it if this is the first time
+	// that layout has been seen. Called before the render pass is opened, because building
+	// uploads, and an upload cannot be issued while a pass is open.
+	public void prepare(RenderType renderLayer) {
+		if (callback == null) {
+			mesh = null;
+			return;
+		}
+		final VertexFormat format = renderLayer.format();
+		if (!meshes.containsKey(format)) {
+			meshes.put(format, build(format));
+		}
+		mesh = meshes.get(format);
 	}
 *///? } else {
 	public NewOptimizedModel(ResourceLocation texture, VertexFormat.Mode drawMode, RenderStage renderStage, @Nullable Consumer<VertexConsumer> callback) {
@@ -177,9 +208,9 @@ public final class NewOptimizedModel {
 	}
 
 	public void render(RenderPass renderPass, GpuBufferSlice transform) {
-		if (vertexBuffer != null) {
+		if (mesh != null) {
 			renderPass.setUniform("DynamicTransforms", transform);
-			renderPass.drawIndexed(0, 0, indexCount, 1);
+			renderPass.drawIndexed(0, 0, mesh.indexCount(), 1);
 		}
 	}
 *///? } else if >= 1.21.4 {
@@ -260,10 +291,10 @@ public final class NewOptimizedModel {
 	 */
 //? if >= 26.1 {
 	/*public void begin(RenderPass renderPass, RenderType renderLayer, AbstractTexture abstractTexture) {
-		if (vertexBuffer != null) {
+		if (mesh != null) {
 			renderPass.setPipeline(renderLayer.pipeline());
 			RenderSystem.bindDefaultUniforms(renderPass);
-			renderPass.setVertexBuffer(0, vertexBuffer);
+			renderPass.setVertexBuffer(0, mesh.vertexBuffer());
 
 			// All three samplers have to be bound by hand. The render setup that would normally do it
 			// keeps its texture map private, and the entity vertex format carries overlay and lightmap
@@ -280,7 +311,7 @@ public final class NewOptimizedModel {
 
 			// Quads are drawn through the shared sequential index buffer rather than one of our own.
 			final RenderSystem.AutoStorageIndexBuffer autoStorageIndexBuffer = RenderSystem.getSequentialBuffer(drawMode);
-			renderPass.setIndexBuffer(autoStorageIndexBuffer.getBuffer(indexCount), autoStorageIndexBuffer.type());
+			renderPass.setIndexBuffer(autoStorageIndexBuffer.getBuffer(mesh.indexCount()), autoStorageIndexBuffer.type());
 		}
 	}
 *///? } else if >= 1.21.4 {

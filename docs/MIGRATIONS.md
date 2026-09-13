@@ -573,6 +573,16 @@ put a spike through the sky at every car of a train while the car bodies, drawn 
 layers, were perfect. The mesh is now packed in `renderLayer.format()`, and the stage to layer
 mapping lives in `MoreRenderLayers.get` so that the build and the draw ask the same question.
 
+The layout is not even fixed for the life of the process. Iris, with a shader pack active,
+makes every entity pipeline report an extended layout during level rendering — tangent,
+mid-texture and entity-id elements on top of `ENTITY` — and extends any `BufferBuilder`
+constructed while that holds. A mesh built with shaders off and drawn after a pack was applied
+was read at the extended stride and every train came apart, while launching with the pack on
+never showed it because the meshes were built extended from the start. `NewOptimizedModel` now
+keeps one mesh per layout its layer has been seen to report, reading the layout just before each
+batch and building a missing one ahead of the pass. The general rule: read `renderLayer.format()`
+at draw time, never cache it.
+
 The same rule cuts the other way for a buffered draw: a vertex missing an element the format
 declares is refused outright rather than defaulted. The line layer's new width element took the
 client down the first time the mod drew a line, which needs only a brush, a lift tool or a rail
