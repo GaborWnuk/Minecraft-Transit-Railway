@@ -523,6 +523,92 @@ mistake does not fail to compile and does not misdraw; it silently loses a playe
 on the next world reload. Verify by placing configured blocks, restarting the world, and
 confirming their settings survived.
 
+**Render passes own the frame**
+
+The single rule behind four separate failures here, and the one to check first when a new screen
+or renderer misbehaves. From 26.1 a render pass is exclusive: while one is open the command
+encoder refuses everything that is not a bind or a draw. Uploading a texture, mapping a buffer
+and clearing a target are all commands, and all of them throw.
+
+It caught the interface image drawing, the model texture binding, the per model transform
+uniform and the per map tile transform uniform, in that order, each one only once the previous
+was fixed and the next code path could run.
+
+That matters because the calls which trigger them do not look like commands at the call site:
+
+- `TextureManager.getTexture(id)` loads and uploads the texture the first time it is asked.
+- `DynamicUniforms.writeTransform(...)` maps a buffer to write into.
+- `ReleasedDynamicTexture.getDynamicGlId()` uploads before returning the identifier.
+
+So resolve every texture, write every uniform and finish every upload **before** opening the
+pass, and leave the pass holding nothing but binds and draws. Where a batch needs one uniform
+per instance, `DynamicUniforms.writeTransforms(...)` writes them all at once and hands back one
+slice per instance; that is what it exists for.
+
+The failure is badly signposted. It throws inside vanilla with a message about render passes and
+no hint of which mod opened one, and if the pass is left open the next frame dies somewhere else
+entirely, often in the renderer's own clear. None of it appears at compile time, and the mod's
+own interface code hit it as readily as the world renderer did.
+
+**The pipeline declares the vertex layout**
+
+The sibling of the rule above, and the second thing to check when geometry misbehaves rather than
+crashes. Up to 26.1 a `VertexBuffer` carried its own `VertexFormat` and set the attribute pointers
+from it, so a mesh packed in a layout that was merely a **superset** of what the shader read still
+drew correctly. From 26.1 the layout comes from `RenderPipeline.getVertexFormat()` and the mesh's
+own format is never consulted, so the two have to agree exactly.
+
+Layers that look interchangeable are not:
+
+| Layer | Format | Vertex |
+|---|---|---|
+| `entityCutout`, `entityTranslucent*` | `DefaultVertexFormat.ENTITY` | 36 bytes |
+| `beaconBeam` | `DefaultVertexFormat.BLOCK` | 32 bytes, no overlay element |
+| `lines` | `DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH` | carries the width per vertex |
+
+`NewOptimizedModel` packed every mesh as `ENTITY` while `MoreRenderLayers` drew the light stages
+through `beaconBeam`. Read at 32 bytes instead of 36, every position after the first came out of
+the middle of the vertex before it — packed colour and texture bits reinterpreted as floats — which
+put a spike through the sky at every car of a train while the car bodies, drawn through entity
+layers, were perfect. The mesh is now packed in `renderLayer.format()`, and the stage to layer
+mapping lives in `MoreRenderLayers.get` so that the build and the draw ask the same question.
+
+The same rule cuts the other way for a buffered draw: a vertex missing an element the format
+declares is refused outright rather than defaulted. The line layer's new width element took the
+client down the first time the mod drew a line, which needs only a brush, a lift tool or a rail
+item in hand; `IDrawing.drawLineInWorld` writes the width now.
+
+Note that `DefaultVertexFormat.NEW_ENTITY` was renamed to `ENTITY`; there is no separate `ENTITY`
+of the older kind to confuse it with. Writing an element the format does not have — `setOverlay`
+into a `BLOCK` buffer — is silently skipped by `BufferBuilder` rather than failing, so packing for
+the narrower format is safe.
+
+The way to tell this apart from bad geometry is to rule the geometry out. Log the source
+coordinates at the call site and scan the built `MeshData` vertex buffer for out-of-range floats;
+if both are clean and the picture is not, the mesh and the pipeline disagree about the layout.
+
+**The interface pipeline has no depth test, and the buffer flushes late**
+
+The third rule of the family, and the one behind a map that was black only when something was
+on it. `RenderPipeline.Builder.build()` resolves an unset depth-stencil state to none, and the
+interface snippet never sets one, so `RenderPipelines.GUI` and `GUI_TEXTURED` neither test nor
+write depth. A z offset between two interface draws, which the old `RenderType.gui()` honoured,
+now means nothing.
+
+That matters because `Drawing`, and anything else writing through the shared buffer source, does
+not draw: the batch waits until a different render type is requested or `endBatch()` is called.
+Anything drawn immediately in between — a render pass, a stored mesh — ends up underneath the
+batch when it finally flushes. The dashboard map drew its background into the buffer, its tiles
+through a pass, and its stations into the same batch as the background, so the first label
+flushed background and stations together on top of the tiles. Before 26.1 the tiles sat at z = 1
+and won the depth test against the late background, which is why upstream never saw it.
+
+Where an immediate draw has to sit above buffered work, flush the buffer first:
+`Minecraft.getInstance().renderBuffers().bufferSource().endBatch()`. Flush again before lifting
+a scissor, because the clip is read when a batch is drawn rather than when it is written. The
+tell is a picture that is right when some element is absent and clobbered when it is present:
+the element's presence is what triggers the flush.
+
 
 ---
 

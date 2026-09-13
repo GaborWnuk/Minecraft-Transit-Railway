@@ -28,6 +28,13 @@ stonecutter parameters {
 			string(true) { replace("net.minecraft.client.renderer.RenderType", "net.minecraft.client.renderer.rendertype.RenderType") }
 			string(true) { replace("net.minecraft.client.renderer.block.model.BakedQuad", "net.minecraft.client.resources.model.geometry.BakedQuad") }
 
+			// LightTexture both moved package and was renamed, but LightCoordsUtil kept pack(...) and
+			// block(...) with identical signatures. The import and the call sites are therefore rewritten
+			// by two rules: the first matches only the import, which ends in a semicolon, and the second
+			// only the static calls, which are followed by a dot.
+			string(true) { replace("net.minecraft.client.renderer.LightTexture", "net.minecraft.util.LightCoordsUtil") }
+			string(true) { replace("LightTexture.", "LightCoordsUtil.") }
+
 			// NeoForge dropped the bus attribute and the Bus enum from @EventBusSubscriber; events now
 			// declare which bus they belong to themselves. Only the attribute needs removing, and it is
 			// stripped here rather than guarded in the four subscriber classes because those files sit
@@ -65,6 +72,15 @@ stonecutter parameters {
 			// parse a condition nested inside a commented-out region.
 			string(true) { replace("RegisterColorHandlersEvent.Block", "RegisterColorHandlersEvent.BlockTintSources") }
 			string(true) { replace("event.getBlockColors().register(createTintSource(blockColorProvider), ", "event.register(List.of(createTintSource(blockColorProvider)), ") }
+
+			// The render type factories moved from RenderType to RenderTypes, keeping their argument
+			// lists. Only itemEntityTranslucentCull was also renamed, to entityTranslucentCullItemTarget.
+			// The RenderType type itself is unaffected beyond its package, handled further above.
+			string(true) { replace("RenderType.beaconBeam(", "RenderTypes.beaconBeam(") }
+			string(true) { replace("RenderType.entityCutout(", "RenderTypes.entityCutout(") }
+			string(true) { replace("RenderType.text(", "RenderTypes.text(") }
+			string(true) { replace("RenderType.lines(", "RenderTypes.lines(") }
+			string(true) { replace("RenderType.itemEntityTranslucentCull(", "RenderTypes.entityTranslucentCullItemTarget(") }
 
 			// ServerPlayer.level() now returns a ServerLevel directly, so the separate accessor went.
 			string(true) { replace("serverPlayerEntity.serverLevel()", "serverPlayerEntity.level()") }
@@ -110,6 +126,9 @@ stonecutter parameters {
 			// The server field on a player is private now; the level it is in still exposes the server.
 			string(true) { replace("context.player().server", "context.player().level().getServer()") }
 			string(true) { replace("serverPlayerEntity.server::execute", "serverPlayerEntity.level().getServer()::execute") }
+
+			// Render targets take a name for debugging, as the textures do.
+			string(true) { replace("new TextureTarget(", "new TextureTarget(\"MTR preview\", ") }
 
 			// Widgets follow the same retained model as everything else drawn on screen: what was a
 			// render method is now an extraction one. Only the name changed, the arguments being the
@@ -175,6 +194,15 @@ stonecutter parameters {
 			string(true) { replace("PayloadTypeRegistry.playS2C()", "PayloadTypeRegistry.clientboundPlay()") }
 			string(true) { replace("PayloadTypeRegistry.playC2S()", "PayloadTypeRegistry.serverboundPlay()") }
 
+			// Scissoring now has to name what it applies to, because the immediate scissor state no
+			// longer follows every draw. Both call sites bracket render type draws.
+			string(true) { replace("RenderSystem.enableScissor(", "RenderSystem.enableScissorForRenderTypeDraws(") }
+			string(true) { replace("RenderSystem.disableScissor()", "RenderSystem.disableScissorForRenderTypeDraws()") }
+
+			// The renderer is asked whether it draws off screen at all, rather than being asked about one
+			// block entity. All three overrides here answered true unconditionally, so nothing is lost.
+			string(true) { replace("shouldRenderOffScreen(T blockEntity)", "shouldRenderOffScreen()") }
+
 			// Screens extract render state instead of drawing, so their entry points were renamed. The
 			// three argument render(context, mouseX, mouseY) that the widgets in this mod declare is
 			// their own and keeps its name, which is why the parameter list is spelled out in full here.
@@ -216,6 +244,12 @@ stonecutter parameters {
 			// rule that matches earlier in the line wins the span, and this one starts three characters
 			// sooner.
 			string(true) { replace("event.getGuiGraphics()", "event.getGuiGraphics()") }
+
+			// The level render stages are separate event types now rather than one event carrying a stage,
+			// and the camera travels in the render state. The stage chosen is the one the Fabric side of
+			// this mod already listens to, so both loaders draw at the same point.
+			string(true) { replace("public static void worldRendering(RenderLevelStageEvent event) {\n\t\tif (worldRenderCallback != null && event.getStage() == RenderLevelStageEvent.Stage.AFTER_ENTITIES) {", "public static void worldRendering(RenderLevelStageEvent.AfterOpaqueFeatures event) {\n\t\tif (worldRenderCallback != null) {") }
+			string(true) { replace("event.getCamera().getPosition()", "event.getLevelRenderState().cameraRenderState.pos") }
 
 			// The remaining reads of a player's own server field, which is private now.
 			string(true) { replace(".accept(serverPlayerEntity.server, serverPlayerEntity)", ".accept(serverPlayerEntity.level().getServer(), serverPlayerEntity)") }
