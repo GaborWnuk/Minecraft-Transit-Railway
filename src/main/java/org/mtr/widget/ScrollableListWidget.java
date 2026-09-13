@@ -106,7 +106,7 @@ public final class ScrollableListWidget<T> extends ScrollablePanelWidget {
 					listItem.drawIcon.draw(drawing, (float) startX, (float) startY);
 				}
 				if (listItem.deferredDrawIcon != null) {
-					deferredRenders.add(() -> listItem.deferredDrawIcon.draw(matrixStack, (float) startX, (float) startY));
+					deferredRenders.add(() -> listItem.deferredDrawIcon.draw(context, matrixStack, (float) startX, (float) startY));
 				}
 
 				// Draw text
@@ -262,7 +262,7 @@ public final class ScrollableListWidget<T> extends ScrollablePanelWidget {
 
 			dataList.add(ListItem.createChild(
 				(drawing, x, y) -> GuiHelper.drawCircle(drawing, x + GuiHelper.DEFAULT_PADDING / 2F, y + GuiHelper.DEFAULT_PADDING / 2F, GuiHelper.DEFAULT_LINE_SIZE - GuiHelper.DEFAULT_PADDING, 32, colors),
-				(matrixStack, x, y) -> drawPlatformNumber(matrixStack, x, y, savedRail.getName()),
+				(context, matrixStack, x, y) -> drawPlatformNumber(context, matrixStack, x, y, savedRail.getName()),
 				GuiHelper.DEFAULT_LINE_SIZE - GuiHelper.DEFAULT_PADDING / 2,
 				savedRail,
 				text,
@@ -322,7 +322,7 @@ public final class ScrollableListWidget<T> extends ScrollablePanelWidget {
 
 			dataList.add(ListItem.createChild(
 				(drawing, x, y) -> drawing.setVerticesWH(x + GuiHelper.DEFAULT_PADDING / 2F, y + GuiHelper.DEFAULT_PADDING / 2F, GuiHelper.DEFAULT_LINE_SIZE - GuiHelper.DEFAULT_PADDING, GuiHelper.DEFAULT_LINE_SIZE - GuiHelper.DEFAULT_PADDING).setColor(stationColor).draw(),
-				(matrixStack, x, y) -> drawPlatformNumber(matrixStack, x, y, platform.getName()),
+				(context, matrixStack, x, y) -> drawPlatformNumber(context, matrixStack, x, y, platform.getName()),
 				GuiHelper.DEFAULT_PADDING + GuiHelper.MINECRAFT_FONT_SIZE,
 				routePlatformData,
 				customDestinationPrefix + stationName,
@@ -360,8 +360,8 @@ public final class ScrollableListWidget<T> extends ScrollablePanelWidget {
 		}
 	}
 
-	private static void drawPlatformNumber(PoseStack matrixStack, double x, double y, String name) {
-		FontRenderHelper.render(matrixStack, Utilities.formatName(name), FontRenderOptions.builder()
+	private static void drawPlatformNumber(@Nullable GuiGraphics context, PoseStack matrixStack, double x, double y, String name) {
+		FontRenderHelper.render(context, matrixStack, Utilities.formatName(name), FontRenderOptions.builder()
 			.horizontalPositioning(FontRenderOptions.Alignment.CENTER)
 			.verticalPositioning(FontRenderOptions.Alignment.CENTER)
 			.horizontalSpace(GuiHelper.MINECRAFT_TEXT_LINE_HEIGHT)

@@ -41,7 +41,7 @@ public final class FontRenderHelper {
 	 * handed to it to draw later; the world callers, which pass their own buffer source or draw
 	 * while the world is being drawn, are unaffected.</p>
 	 */
-	public static FloatFloatImmutablePair render(GuiGraphics context, @Nullable PoseStack matrixStack, String text, FontRenderOptions fontRenderOptions) {
+	public static FloatFloatImmutablePair render(@Nullable GuiGraphics context, @Nullable PoseStack matrixStack, String text, FontRenderOptions fontRenderOptions) {
 		return render(context, matrixStack, null, text, fontRenderOptions);
 	}
 
