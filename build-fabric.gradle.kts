@@ -5,24 +5,37 @@ import org.mtr.core.WebserverSetup
 
 plugins {
 	id("net.fabricmc.fabric-loom-remap")
-	id("dev.kikugie.fletching-table.fabric") version "+"
-	id("io.freefair.lombok") version "+"
-	id("com.gradleup.shadow") version "+"
+	id("dev.kikugie.fletching-table.fabric") version "0.1.0-alpha.23"
+	id("io.freefair.lombok") version "9.5.0"
+	id("com.gradleup.shadow") version "9.6.1"
 }
 
 base.archivesName = property("mod.id") as String
 version = "${property("mod.version")}+${sc.current.version}-fabric"
 
 repositories {
+	// Transport Simulation Core can be built from source and published locally, which is the only
+	// route that works without GitHub credentials. Restricted to that single module so every other
+	// dependency keeps resolving from its canonical remote instead of a stale local artifact.
+	mavenLocal {
+		content { includeModule("org.mtr", "transport-simulation-core") }
+	}
 	mavenCentral()
 	maven { url = uri("https://repo.codemc.org/repository/maven-public") } // Occlusion Culling
 	maven { url = uri("https://repo.essential.gg/repository/maven-public") } // Elementa and UniversalCraft
 	maven { url = uri("https://api.modrinth.com/maven") }
-	maven {
-		url = uri("https://maven.pkg.github.com/Minecraft-Transit-Railway/Transport-Simulation-Core")
-		credentials {
-			username = providers.gradleProperty("gpr.user").getOrNull() ?: "github-actions"
-			password = providers.gradleProperty("gpr.key").getOrNull() ?: System.getenv("GITHUB_TOKEN")
+	// GitHub Packages demands an access token even though Transport Simulation Core is a public
+	// repository, so this repository is only declared once a token is actually available. Gradle
+	// rejects a null password while configuring the project, which would otherwise abort every
+	// credential-less build before it reached the locally published copy above.
+	val githubPackagesToken = providers.gradleProperty("gpr.key").orNull ?: System.getenv("GITHUB_TOKEN")
+	if (githubPackagesToken != null) {
+		maven {
+			url = uri("https://maven.pkg.github.com/Minecraft-Transit-Railway/Transport-Simulation-Core")
+			credentials {
+				username = providers.gradleProperty("gpr.user").orNull ?: "github-actions"
+				password = githubPackagesToken
+			}
 		}
 	}
 }
@@ -70,15 +83,17 @@ dependencies {
 	modImplementation(fletchingTable.modrinth("modmenu", sc.current.version))
 	modImplementationAndInclude("gg.essential:universalcraft-${property("dependency.universal_craft_minecraft")}-fabric:${property("dependency.universal_craft")}")
 
-	implementationAndShadow("org.mtr:transport-simulation-core:+")
-	implementationAndShadow("com.logisticscraft:occlusionculling:+")
+	implementationAndShadow("org.mtr:transport-simulation-core:1.0.2")
+	// Occlusion Culling has only ever published snapshots, so this coordinate stays mutable even
+	// though the version is fixed. Nothing newer than 0.0.8 exists to move to.
+	implementationAndShadow("com.logisticscraft:occlusionculling:0.0.8-SNAPSHOT")
 	implementationAndInclude("gg.essential:elementa:${property("dependency.elementa")}")
-	implementationAndInclude("org.jetbrains.kotlin:kotlin-stdlib:+")
-	implementation("org.jspecify:jspecify:+")
+	implementationAndInclude("org.jetbrains.kotlin:kotlin-stdlib:2.4.10")
+	implementation("org.jspecify:jspecify:1.0.1")
 
-	testImplementation("org.junit.jupiter:junit-jupiter-api:5.+")
-	testImplementation("org.junit.platform:junit-platform-launcher:1.+")
-	testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.+")
+	testImplementation("org.junit.jupiter:junit-jupiter-api:5.14.4")
+	testImplementation("org.junit.platform:junit-platform-launcher:1.14.4")
+	testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.14.4")
 }
 
 tasks {
