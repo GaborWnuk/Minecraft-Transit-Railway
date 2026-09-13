@@ -378,6 +378,79 @@ A `// TODO` without follow-up over a year old is a bug. Audit this list each rel
 
 ## 12. Minecraft 26.1 port
 
+**What's old / what's new**
+
+- **Old**: 1.21.1 and 1.21.4, obfuscated, built through Loom's remapping variant.
+- **New**: 26.1.2, unobfuscated, built through Loom's non-remapping variant. Minecraft has
+  used year-based versions since 2026, and everything from 26.1 onwards ships without
+  obfuscation, so mappings no longer exist and Yarn is discontinued.
+
+**State**
+
+All six nodes compile. On NeoForge 26.1.2 the whole core loop has been run and confirmed, on the
+client and on a dedicated server: laying every type of rail, building tunnels, tunnel walls and
+bridges with their material selection, the Rail Dashboard including its world map across a
+variety of biomes, creating stations, depots and routes, recalculating them, choosing vehicles
+and cars in a depot, and trains generating and running a route with their models rendering
+correctly. The web server starts and serves the system map.
+
+Fabric 26.1.2 has been played in singleplayer since 2026-09-11 with the same railway: the world
+loads, rails and the dashboard work, and trains run their routes. Both loaders have also been
+run as dedicated servers with a copy of that world: the mod registers, the data pack loads with
+every recipe, the railway data is read and written back, and `stop` shuts down cleanly.
+
+Not yet exercised at runtime:
+- Block entity data on 1.21.4-format worlds is confirmed: the baseline world's three PIDS with
+  populated `platform_ids` loaded, displayed their platforms, and were written back by 26.1.2 as
+  `LongArray` with identical values; `LastUpdate` on those chunks moved, so the write went
+  through the mod's own save path rather than the upgrade's NBT copy. Data first written by
+  26.1.2 in a fresh world has been through many reloads in play.
+- Planes, lifts, and the PIDS kinds not yet placed. Cable cars and boats are done: stations,
+  depot and route configuration and the vehicles running, on a NeoForge server with clients
+  attached, in multiplayer. Escalators work in singleplayer and multiplayer.
+  Signalling is done: signals and decorative lights, trains holding for an occupied section.
+  A variety of PIDS have been configured and show arrivals. Two players have played the whole
+  of the above together on a NeoForge server, building the same elements and riding the trains,
+  with nothing out of place.
+
+Nothing is known to be broken. The last item on that list was a pair of text sites that drew
+into the world buffer rather than the screen: the warning marker in
+`VehicleSelectorScreen.drawVehicleIcon` and the platform number badge in
+`ScrollableListWidget.drawPlatformNumber`, both reached through `ListItem.DeferredDrawIcon`,
+which carried a `PoseStack` but no `GuiGraphics`. The interface now carries the screen as well,
+and the marker has been seen drawn on 26.1.2. The Elementa `ListComponent` passes `null` there,
+because it draws immediately through the buffer source rather than through a screen; its badges
+draw that way, as the map's platform popup shows.
+
+Two techniques are in use, and the choice between them is deliberate:
+
+- **Rewritten while building**, declared in `stonecutter.gradle.kts` under
+  `replacements`. Used only where a name changed and behaviour did not, such as
+  `ResourceLocation` becoming `Identifier`, the packages that moved, and the
+  `EventBusSubscriber` attribute that was deleted. This keeps roughly 220 sites free of
+  guards and leaves the shared source untouched.
+- **Guarded in the source** with `//? if >= 26.1 {`. Used where behaviour differs, such as
+  the NBT getters that now return `Optional`. A reader of those methods needs to see that
+  two forms exist, which a rewrite would hide.
+
+What remains, largest first:
+
+| Item | Needs a client? | Notes |
+|---|---|---|
+| Everything past a single train line | yes | Planes, lifts, the remaining PIDS kinds |
+
+The "needs a client" column is the important one. Everything marked no can be finished against
+the compiler. Everything marked yes compiles just as happily when it is wrong, and shows up only
+as incorrect drawing, wrong draw order, or a collapsed frame rate, so it wants someone watching
+the game rather than the build log. Every rendering defect found so far was of that kind.
+
+The `GuiGraphics` work is the substantial one. Minecraft 26.1 replaced immediate-mode
+drawing with retained-mode extraction: `Screen.render(GuiGraphics, ...)` became
+`Screen.extractRenderState(GuiGraphicsExtractor, ...)`. The drawing vocabulary largely
+survives, but `blit` and `fill` take a `RenderPipeline` first, `drawString` became `text`
+and `centeredText`, and `pose()` returns a two-dimensional `Matrix3x2fStack` rather than a
+`PoseStack`. That last one is the only part needing real thought.
+
 **Fabric API replacements**
 
 Verified against Fabric API 0.155.2+26.1.2 by reading the shipped module jars, since several
@@ -619,6 +692,81 @@ a scissor, because the clip is read when a batch is drawn rather than when it is
 tell is a picture that is right when some element is absent and clobbered when it is present:
 the element's presence is what triggers the flush.
 
+**Recipes, now closed**
+
+All 340 recipes failed to parse on 26.1. MTR writes ingredients in the object form 1.21.1 reads,
+`{"item": "minecraft:glass_pane"}` and `{"tag": "c:redstone_dusts"}`, while 26.1 reads only the
+string form, `"minecraft:glass_pane"` and `"#c:redstone_dusts"`. An object-form ingredient is
+dropped without complaint, the list comes out empty, and the recipe is rejected with
+`List is too short: 0, expected range [1-9]` — so the error names the symptom, not the cause.
+1.21.4 reads both forms, which is why it never showed.
+
+The source keeps the object form, because 1.21.1 accepts nothing else, and the 26.1 nodes
+rewrite the files as `processResources` copies them, through `RecipeIngredientFilter` in
+`buildSrc`, which parses the JSON rather than matching text. One ingredient also changed name:
+`minecraft:chain` became `minecraft:iron_chain` when copper chains arrived, and it is mapped in
+the same filter. Confirm the target form against the game's own data, not memory —
+`data/minecraft/recipe/glass_pane.json` in each version's client jar shows it, and
+`iron_chain.json` shows the rename.
+
+Note that Gradle did not consider the new filter an input change and reported
+`processResources` up to date on the first run; a clean build applies it.
+
+**Finish line**
+
+The mod builds and runs on both loaders, a train completes a route, block entity settings
+survive a world reload, and recipes work. All four now hold. What keeps the section open is the
+breadth of the mod past a single line, listed under *State*.
+
+**Pitfall**
+
+Do **not** reach for a build-time replacement to fix a compile error without first checking
+who else calls the method. Of roughly two hundred `getString` callers here, only eight read
+NBT; the rest are translation holders and the schema reader. A blanket rewrite would have
+silently corrupted them. The same applies to any token short enough to appear inside an
+unrelated name: rewriting `Identifier` in reverse would have mangled `formatIdentifier` and
+a log message that mentions the word in prose.
+
+Note also that a runtime check cannot guard a Gradle task accessor. Referring to `remapJar`
+directly stops the build script compiling on unobfuscated versions, because the type-safe
+accessor is generated only while the remapping Loom variant is applied. Resolve such tasks
+by name with an explicit type instead.
+
+**Packaging, now closed**
+
+The Fabric 26.1.2 jar used to ship without its shaded libraries. With no remap step the plain
+`jar` task becomes the mod jar, and the Shadow output was not wired into it, so the release jar
+held the mod and its assets and none of the four and a half thousand library classes it needs.
+`buildAndCollect` now ships the shaded jar directly on unobfuscated versions, which is what the
+NeoForge build already did on every version.
+
+The first Fabric launch found the other half of that same problem. Loom nests the `include`d
+jars — UniversalCraft, Elementa, the Kotlin standard library — into *its* mod jar and writes the
+`jars` entry into `fabric.mod.json` as it does so. On the remapping variant that jar is `remapJar`,
+which is fed the shaded jar and therefore ends up complete. On unobfuscated versions the plain
+`jar` task is the mod jar, and it knew nothing of the shaded libraries while the shaded jar knew
+nothing of the nesting; shipping the shaded half meant no UniversalCraft, and the first screen
+failed. The plain jar now takes the shaded jar's contents in place of the compiled output — the
+whole of it, because shading relocates the occlusion culling library and rewrites the callers to
+match, so the compiled classes alone would name it where it no longer is — and Loom nests into
+that. Note that Loom resets the jar task's duplicate strategy after configuration, so the
+compiled output is excluded by path rather than deduplicated.
+
+Three further packaging traps, all found by running the artefact rather than building it:
+
+- The shaded jar carried seven `META-INF/services` entries naming classes that Transport
+  Simulation Core's own minimisation had removed. NeoForge builds a module descriptor from the
+  mod jar on 26.1 and refuses one whose services it cannot resolve, so the game stopped during
+  mod scanning. Those registrations are now excluded.
+- Stonecutter's generated copy of the resources was not a faithful one. On roughly one run in
+  three it wrote a single 8 KiB block of some large file from 4 KiB further on — a different file
+  each time, the fonts most often at up to 18 MiB — and serial runs were no better than parallel
+  ones, so it is the plugin's own copy and not Gradle's scheduling. It was fatal only because
+  26.1 rasterises every glyph a provider declares at reload time rather than lazily, so one
+  damaged font stops the game before the title screen. Nothing under the resources carries a
+  Stonecutter marker, so the source set now reads `src/main/resources` directly and the
+  generated copy is left unused. Still compare the built jar against the source before shipping
+  it; all 4889 resources should match byte for byte apart from the rewritten recipes.
 
 ---
 

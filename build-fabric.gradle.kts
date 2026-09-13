@@ -4,7 +4,7 @@ import org.mtr.core.Generator
 import org.mtr.core.WebserverSetup
 
 plugins {
-	id("net.fabricmc.fabric-loom-remap")
+	id("dev.kikugie.loom-back-compat")
 	id("dev.kikugie.fletching-table.fabric") version "0.1.0-alpha.23"
 	id("io.freefair.lombok") version "9.5.0"
 	id("com.gradleup.shadow") version "9.6.1"
@@ -41,9 +41,12 @@ repositories {
 }
 
 val buildTools = BuildTools(sc.current.version, "fabric", project.property("mod.version").toString(), project.rootDir)
+// Minecraft 26.1 runs on Java 25, not 26: its version manifest pins the java-runtime-epsilon
+// component to major version 25. Targeting 26 would emit class files the game's own runtime
+// refuses to load, and the mismatch would only surface at launch rather than during the build.
 val requiredJava = when {
 	sc.current.parsed < "26.0" -> JavaVersion.VERSION_21
-	else -> JavaVersion.VERSION_26
+	else -> JavaVersion.VERSION_25
 }
 
 configurations {
@@ -104,7 +107,7 @@ fun DependencyHandlerScope.implementationAndShadow(notation: Any) {
 
 dependencies {
 	minecraft("com.mojang:minecraft:${sc.current.version}")
-	mappings(loom.officialMojangMappings())
+	loomx.applyMojangMappings()
 
 	modImplementation("net.fabricmc:fabric-loader:${property("dependency.fabric_loader")}")
 	modImplementation("net.fabricmc.fabric-api:fabric-api:${property("dependency.fabric_api")}")
@@ -117,7 +120,7 @@ dependencies {
 	implementationAndShadow("com.logisticscraft:occlusionculling:0.0.8-SNAPSHOT")
 	implementationAndInclude("gg.essential:elementa:${property("dependency.elementa")}")
 	implementationAndInclude("org.jetbrains.kotlin:kotlin-stdlib:2.4.10")
-	implementation("org.jspecify:jspecify:1.0.1")
+	implementation("org.jspecify:jspecify:1.0.0")
 
 	testImplementation("org.junit.jupiter:junit-jupiter-api:5.14.4")
 	testImplementation("org.junit.platform:junit-platform-launcher:1.14.4")
@@ -218,8 +221,39 @@ tasks {
 		exclude("META-INF/services/org.mtr.libraries.org.slf4j.*")
 	}
 
-	remapJar {
-		inputFile.set(shadowJar.get().archiveFile)
+	// Only the remapping variant has a remap step to feed the shaded jar into. On unobfuscated
+	// versions the plain jar task is already the mod jar, so there is nothing to rewire.
+	//
+	// The task is resolved by name with an explicit type rather than through the type-safe accessor,
+	// because that accessor is generated only while the remapping variant is applied and referencing
+	// it would stop the script compiling on 26.1 and newer. Both variants ship in the same Loom
+	// artefact, so the task class is on the build classpath either way.
+	if (!loomx.isUnobfuscated) {
+		named<net.fabricmc.loom.task.RemapJarTask>("remapJar") {
+			inputFile.set(shadowJar.get().archiveFile)
+		}
+	} else {
+		// On unobfuscated versions the plain jar task is Loom's mod jar: it is where Loom nests the
+		// included jars and writes them into fabric.mod.json. It knows nothing of the shaded
+		// libraries, and the shaded jar knows nothing of the nesting, so each half on its own was
+		// missing the other. Shipping the shaded half left the Fabric jar without UniversalCraft or
+		// Elementa, and the first screen it opened failed. Giving the plain jar the shaded jar's
+		// contents lets Loom nest into the complete jar, which is what remapJar achieves above by
+		// being fed the shaded jar directly.
+		//
+		// The whole of the shaded jar is taken, this project's own classes included, and the
+		// compiled output the task would have packed is dropped. Shading relocates the occlusion
+		// culling library and rewrites the classes that call it to match, so the compiled output
+		// still names the library where it no longer is. The manifest is left to the jar task,
+		// which writes its own.
+		named<Jar>("jar") {
+			dependsOn(shadowJar)
+			val compiledOutput = sourceSets.main.get().output.files
+			exclude { element -> compiledOutput.any { element.file.toPath().startsWith(it.toPath()) } }
+			from(zipTree(shadowJar.flatMap { it.archiveFile })) {
+				exclude("META-INF/MANIFEST.MF")
+			}
+		}
 	}
 
 	withType<JavaCompile>().configureEach {
@@ -237,7 +271,10 @@ tasks {
 		description = "Builds the mod and collects the JAR and sources JAR into the build/libs directory with versioned naming."
 		group = "build"
 		outputs.upToDateWhen { false }
-		from(remapJar.map { it.archiveFile }, remapSourcesJar.map { it.archiveFile })
+		// Loom's mod jar is the one to ship on every version. The remapping variant folds the shaded
+		// jar into it as it remaps, and the unobfuscated one has the shaded jar folded into the plain
+		// jar task above, so either way it carries both the shaded libraries and the nested ones.
+		from(loomx.modJar.map { it.archiveFile }, loomx.modSourcesJar.map { it.archiveFile })
 		into(rootProject.layout.buildDirectory.file("release"))
 		rename("${project.property("mod.id")}-([^-]+)-([^-]+)-([a-z]+)(-sources|)\\.jar", "${project.property("mod.id").toString().uppercase()}-$3-$1-$2$4.jar")
 		dependsOn("build")
