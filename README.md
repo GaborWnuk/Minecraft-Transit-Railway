@@ -23,6 +23,7 @@
 > - PIDS: a variety of them configured and showing arrivals, though not yet every kind
 > - Cable cars, end to end on a NeoForge server and client: stations, depot and route
 >   configuration, and the cars running
+> - Boats, end to end the same way, in multiplayer
 > - Multiplayer: two players on a NeoForge server, both building the same elements and riding the
 >   trains, with nothing out of place
 > - Running the mod on a dedicated server, NeoForge and Fabric alike
@@ -32,8 +33,7 @@
 > **Known gaps**
 >
 > - Platform number badges in list rows, and the warning marker in the vehicle selector, are not drawn
-> - Boats, planes, lifts, the remaining PIDS kinds, and everything else not listed above are
->   untested
+> - Planes, lifts, the remaining PIDS kinds, and everything else not listed above are untested
 >
 > For the current state of the port in detail, see [Migrations](docs/MIGRATIONS.md).
 

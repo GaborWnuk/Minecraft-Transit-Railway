@@ -405,8 +405,9 @@ Not yet exercised at runtime:
   `LongArray` with identical values; `LastUpdate` on those chunks moved, so the write went
   through the mod's own save path rather than the upgrade's NBT copy. Data first written by
   26.1.2 in a fresh world has been through many reloads in play.
-- Boats, planes, lifts, and the PIDS kinds not yet placed. Cable cars are done: stations, depot
-  and route configuration and the cars running, on a NeoForge server with a client attached.
+- Planes, lifts, and the PIDS kinds not yet placed. Cable cars and boats are done: stations,
+  depot and route configuration and the vehicles running, on a NeoForge server with clients
+  attached, in multiplayer.
   Signalling is done: signals and decorative lights, trains holding for an occupied section.
   A variety of PIDS have been configured and show arrivals. Two players have played the whole
   of the above together on a NeoForge server, building the same elements and riding the trains,
@@ -436,7 +437,7 @@ What remains, largest first:
 | Item | Needs a client? | Notes |
 |---|---|---|
 | The two `DeferredDrawIcon` text sites | yes | Listed under *State* above |
-| Everything past a single train line | yes | Boats, planes, lifts, the remaining PIDS kinds |
+| Everything past a single train line | yes | Planes, lifts, the remaining PIDS kinds |
 
 The "needs a client" column is the important one. Everything marked no can be finished against
 the compiler. Everything marked yes compiles just as happily when it is wrong, and shows up only
