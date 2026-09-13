@@ -413,13 +413,14 @@ Not yet exercised at runtime:
   of the above together on a NeoForge server, building the same elements and riding the trains,
   with nothing out of place.
 
-Known to be broken:
-
-- Two text sites still draw into the world buffer rather than the screen, so they are invisible:
-  the platform number badge on list rows (`ScrollableListWidget.drawPlatformNumber` and the same
-  method in `ListComponent`) and the warning marker in `VehicleSelectorScreen.drawVehicleIcon`.
-  Both are reached through `ListItem.DeferredDrawIcon`, which carries a `PoseStack` but no
-  `GuiGraphics`, so fixing them means threading the screen through that interface.
+Nothing is known to be broken. The last item on that list was a pair of text sites that drew
+into the world buffer rather than the screen: the warning marker in
+`VehicleSelectorScreen.drawVehicleIcon` and the platform number badge in
+`ScrollableListWidget.drawPlatformNumber`, both reached through `ListItem.DeferredDrawIcon`,
+which carried a `PoseStack` but no `GuiGraphics`. The interface now carries the screen as well,
+and the marker has been seen drawn on 26.1.2. The Elementa `ListComponent` passes `null` there,
+because it draws immediately through the buffer source rather than through a screen; its badges
+draw that way, as the map's platform popup shows.
 
 Two techniques are in use, and the choice between them is deliberate:
 
@@ -436,7 +437,6 @@ What remains, largest first:
 
 | Item | Needs a client? | Notes |
 |---|---|---|
-| The two `DeferredDrawIcon` text sites | yes | Listed under *State* above |
 | Everything past a single train line | yes | Planes, lifts, the remaining PIDS kinds |
 
 The "needs a client" column is the important one. Everything marked no can be finished against
@@ -716,7 +716,7 @@ Note that Gradle did not consider the new filter an input change and reported
 
 The mod builds and runs on both loaders, a train completes a route, block entity settings
 survive a world reload, and recipes work. All four now hold. What keeps the section open is the
-list under *State*: the two text sites, and the breadth of the mod past a single line.
+breadth of the mod past a single line, listed under *State*.
 
 **Pitfall**
 
