@@ -376,6 +376,104 @@ A `// TODO` without follow-up over a year old is a bug. Audit this list each rel
 
 ---
 
+## 12. Minecraft 26.1 port
+
+**Fabric API replacements**
+
+Verified against Fabric API 0.155.2+26.1.2 by reading the shipped module jars, since several
+of these modules were deleted outright rather than renamed:
+
+| Old | New |
+|---|---|
+| `client.rendering.v1.ColorProviderRegistry` | `client.rendering.v1.BlockColorRegistry` |
+| `client.rendering.v1.HudRenderCallback` | `client.rendering.v1.hud.HudElementRegistry` |
+| `client.rendering.v1.HudLayerRegistrationCallback` | `client.rendering.v1.hud.HudElementRegistry` |
+| `client.rendering.v1.IdentifiedLayer` | `client.rendering.v1.hud.VanillaHudElements` |
+| `client.rendering.v1.WorldRenderEvents` | `client.rendering.v1.level.LevelRenderEvents` |
+| `client.keybinding.v1.KeyBindingHelper` | `client.keymapping.v1.KeyMappingHelper` |
+| `itemgroup.v1.FabricItemGroup` | `creativetab.v1.FabricCreativeModeTab` |
+| `blockrenderlayer.v1.BlockRenderLayerMap` | **no replacement** — see below |
+
+Two of these are not mechanical and want a running client before they are settled.
+
+`WorldRenderEvents.AFTER_ENTITIES` has no exact counterpart. `LevelRenderEvents` splits the
+frame far more finely, into `AFTER_OPAQUE_TERRAIN`, `AFTER_SOLID_FEATURES`,
+`BEFORE_TRANSLUCENT_TERRAIN`, `AFTER_TRANSLUCENT_FEATURES`, `COLLECT_SUBMITS` and others.
+`AFTER_SOLID_FEATURES` is the closest reading of the old behaviour, but this is where every
+vehicle, rail and sign is drawn, so the wrong choice changes draw order and depth sorting
+rather than failing to compile.
+
+`BlockRenderLayerMap` is gone with nothing to replace it. Assigning a render layer to a
+block moved out of code and into the block model JSON, so the fix is a resource change
+across the affected models rather than a source change. `ChunkSectionLayerHelper` is not a
+substitute; it only converts between layer and render type.
+
+**Block tooltips are gone on 26.1**
+
+Minecraft keeps `appendHoverText` on `Item`, adding a display parameter and swapping the list
+for a consumer, and removes it from `Block` entirely. Nothing in the game, NeoForge or Fabric
+offers a block-side replacement, so the fifteen block classes that had tooltips now compile
+that method only below 26.1 and contribute nothing on newer versions.
+
+Restoring them means moving the text onto the matching `BlockItem`, which changes how those
+blocks are registered. That is deliberate outstanding work, not an oversight.
+
+**Block colour handlers**
+
+`BlockColor` became `BlockTintSource`, and the registration changed on both loaders at once.
+The whole mapping, verified against the jars:
+
+| Old | New |
+|---|---|
+| `BlockColor.getColor(BlockState, BlockAndTintGetter, BlockPos, int)` | `BlockTintSource.colorInWorld(BlockState, BlockAndTintGetter, BlockPos)` |
+| Fabric `ColorProviderRegistry.BLOCK.register(handler, blocks)` | `BlockColorRegistry.register(List<BlockTintSource>, Block...)` |
+| NeoForge `RegisterColorHandlersEvent.Block` | `RegisterColorHandlersEvent.BlockTintSources` |
+
+Both loaders now take the same `register(List<BlockTintSource>, Block...)` shape, so the two
+registration paths converge rather than diverging further.
+
+Two things are not mechanical. The tint index is gone, which costs this mod nothing because
+the existing handler ignored it. More importantly `BlockTintSource` has an abstract
+`color(BlockState)` alongside the position-aware default, so the current lambda has to become
+a real implementation, and something has to be decided for the case with no position, which is
+what inventory and particle rendering use. Station colouring is derived from the position, so
+that fallback is a genuine choice rather than a transcription, and it is visible in the game
+rather than in the build.
+
+**Block entity persistence moves to ValueInput and ValueOutput**
+
+`loadAdditional` and `saveAdditional` no longer take a `CompoundTag` and a
+`HolderLookup.Provider`; they take `ValueInput` and `ValueOutput`. This affects the twenty-six
+`readNbt` and `writeNbt` implementations across thirteen classes.
+
+`ValueInput` exposes the same accessor shape the new `CompoundTag` does, `getStringOr`,
+`getIntOr`, `getBooleanOr` and the rest, so the bodies already converted for the `Optional`
+change carry over nearly unaltered. Only the signatures need guarding.
+
+Long arrays are the trap. `ValueOutput` has `putIntArray` but no `putLongArray`, and
+`ValueInput` has `getIntArray` but no `getLongArray`, while this mod stores its identifiers as
+longs: platform ids, route ids, railway sign selections and lift track floor positions. Those
+have to move to `store(key, codec, value)` and `read(key, codec)`.
+
+**Use `Codec.LONG_STREAM`, not `Codec.LONG.listOf()`.** Both compile and both round-trip within
+a single version, but they do not write the same NBT. `NbtOps` implements the `createLongList`
+and `getLongStream` hooks, so a `LONG_STREAM` codec produces a `LongArrayTag`, which is exactly
+what `putLongArray` wrote before. A list codec produces a `ListTag` of `LongTag` instead, and
+every world saved by an older version silently loses those values on load: a passenger
+information display forgets its platforms, a train sensor forgets its routes, a railway sign
+forgets its selections.
+
+Nothing in the build catches this. It appears only as data quietly missing after an upgrade,
+so verify it by loading a world saved on 1.21.4 rather than a freshly created one.
+
+Treat this as needing a client despite looking mechanical. It is the save and load path, so a
+mistake does not fail to compile and does not misdraw; it silently loses a player's block data
+on the next world reload. Verify by placing configured blocks, restarting the world, and
+confirming their settings survived.
+
+
+---
+
 ## How to use this document
 
 - Before starting a refactor on any code that touches the files referenced above, read the
